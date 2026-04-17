@@ -12,7 +12,7 @@ export async function POST(req: Request) {
     const {
       scenePrompt,
       imageStyle,
-      aspectRatio, // <-- page.tsx에서 보낸 비율 값을 받습니다.
+      aspectRatio, 
       customStylePrompt,
       customReferenceImageBase64,
       customReferenceImageMimeType,
@@ -26,37 +26,29 @@ export async function POST(req: Request) {
     const ai = new GoogleGenAI({ apiKey });
     const model = DEFAULT_IMAGE_MODELS[0];
 
-    // AI에게 보낼 설정값 조립
     const config: any = {
       numberOfImages: 1,
-      aspectRatio: aspectRatio || "16:9", // <-- AI에게 선택한 비율 전달
+      aspectRatio: aspectRatio || "16:9", 
     };
 
-    // 참조 이미지(Style)가 있는 경우 추가
     if (imageStyle === "custom" && customReferenceImageBase64) {
-      config.referenceImages = [
-        {
-          referenceType: "STYLE",
-          referenceImage: {
-            imageBytes: customReferenceImageBase64,
-            mimeType: customReferenceImageMimeType,
-          },
+      config.referenceImages = [{
+        referenceType: "STYLE",
+        referenceImage: {
+          imageBytes: customReferenceImageBase64,
+          mimeType: customReferenceImageMimeType,
         },
-      ];
+      }];
     }
 
-    const response = await ai.models.generateImages({
-      model,
-      prompt: scenePrompt,
-      config,
-    });
-
+    const response = await ai.models.generateImages({ model, prompt: scenePrompt, config });
     const image = response?.generatedImages?.[0]?.image;
+
     return NextResponse.json({ 
       imageUrl: `data:${image.mimeType};base64,${image.imageBytes}` 
     });
-
   } catch (error: any) {
+    console.error(error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

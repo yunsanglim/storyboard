@@ -1,3 +1,4 @@
+
 "use client";
 
 import Image from "next/image";
@@ -50,7 +51,6 @@ const IMAGE_STYLE_OPTIONS = [
   { value: "custom",         label: "✏️ 커스텀" },
 ] as const;
 
-/** 종횡비 옵션 추가 */
 const ASPECT_RATIO_OPTIONS = [
   { value: "16:9", label: "📺 가로형 (16:9)" },
   { value: "4:3",  label: "📺 표준 (4:3)" },
@@ -93,16 +93,50 @@ const emptyScenes: Scene[] = Array.from({ length: 7 }).map((_, index) => ({
   imageUrl: defaultImageDataUrl,
 }));
 
-// ─── Main Component ──────────────────────────────────────────────────────────
+// ─── Sub Components ─────────────────────────────────────────────────────────
+
+function SynopsisCard({ sections, topSummary }: { sections: SynopsisSections; topSummary: string[] }) {
+  const hasContent = Object.values(sections).some((v) => v.trim());
+  if (!hasContent && topSummary.every((s) => !s)) {
+    return <div className="rounded-2xl border border-dashed p-8 text-center text-gray-400 bg-white">줄거리를 생성하면 여기에 시놉시스가 표시됩니다.</div>;
+  }
+  return (
+    <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+      <div className="divide-y divide-gray-100">
+        {synopsisSectionMeta.map(({ label, key }) => (
+          sections[key] && (
+            <div key={key} className="flex gap-4 px-8 py-5">
+              <span className="w-32 shrink-0 text-xs font-bold text-indigo-500 uppercase">{label}</span>
+              <p className="text-sm text-gray-700">{sections[key]}</p>
+            </div>
+          )
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CustomStylePanel({ prompt, onPromptChange, referenceImage, onImageChange, onImageRemove }: any) {
+  return (
+    <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/50 p-4 space-y-4">
+      <textarea
+        placeholder="커스텀 스타일 프롬프트를 영문으로 입력하세요..."
+        value={prompt}
+        onChange={(e) => onPromptChange(e.target.value)}
+        className="w-full rounded-lg border p-3 text-sm"
+      />
+    </div>
+  );
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────
 
 export default function Home() {
   const [synopsis, setSynopsis] = useState("");
   const [imageStyle, setImageStyle] = useState<ImageStyleValue>("live_action");
-  const [aspectRatio, setAspectRatio] = useState<AspectRatioValue>("16:9"); // 종횡비 상태 추가
-
+  const [aspectRatio, setAspectRatio] = useState<AspectRatioValue>("16:9");
   const [customStylePrompt, setCustomStylePrompt] = useState("");
   const [customReferenceImage, setCustomReferenceImage] = useState<ReferenceImage | null>(null);
-
   const [synopsisSections, setSynopsisSections] = useState<SynopsisSections>({
     logline: "", worldBackground: "", mainCharacters: "", storyStructure: "",
     coreConflict: "", theme: "", toneStyle: "", planningIntent: "",
@@ -110,13 +144,11 @@ export default function Home() {
   const [topSummary, setTopSummary] = useState<string[]>(Array(6).fill(""));
   const [scenes, setScenes] = useState<Scene[]>(emptyScenes);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationStatus, setGenerationStatus] = useState("");
   const [updatingImageIndexes, setUpdatingImageIndexes] = useState<number[]>([]);
 
   const canGenerate = useMemo(() => synopsis.trim().length > 0, [synopsis]);
-  const canExport = useMemo(() => scenes.some((s) => s.imageUrl !== defaultImageDataUrl && s.description), [scenes]);
+  const canExport = useMemo(() => scenes.some((s) => s.imageUrl !== defaultImageDataUrl), [scenes]);
 
-  /** 이미지 요청 로직에 aspectRatio 추가 */
   const requestSceneImage = async (scene: Scene, index: number, style: ImageStyleValue) => {
     const res = await fetch("/api/regenerate-image", {
       method: "POST",
@@ -127,23 +159,22 @@ export default function Home() {
         sceneDescription: scene.description,
         scenePrompt: scene.imagePrompt,
         imageStyle: style,
-        aspectRatio: aspectRatio, // 이 부분이 서버로 전달되어야 합니다
+        aspectRatio, // 종횡비 추가
         ...(style === "custom" && {
-            customStylePrompt,
-            customReferenceImageBase64: customReferenceImage?.base64,
-            customReferenceImageMimeType: customReferenceImage?.mimeType,
-        })
+          customStylePrompt,
+          customReferenceImageBase64: customReferenceImage?.base64,
+          customReferenceImageMimeType: customReferenceImage?.mimeType,
+        }),
       }),
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data?.error ?? "이미지 생성 실패");
+    if (!res.ok) throw new Error(data.error);
     return data.imageUrl;
   };
 
   const handleGenerate = async () => {
     if (!canGenerate) return;
     setIsGenerating(true);
-    setGenerationStatus("줄거리 및 이미지 생성 중...");
     try {
       const res = await fetch("/api/generate-text", {
         method: "POST",
@@ -153,87 +184,67 @@ export default function Home() {
       const data = await res.json();
       setSynopsisSections(data.synopsisSections);
       setTopSummary(data.topSummary);
-
       const nextScenes = data.scenes.map((s: any) => ({ ...s, imageUrl: defaultImageDataUrl }));
       setScenes(nextScenes);
-
       setUpdatingImageIndexes(nextScenes.map((_: any, i: number) => i));
       for (let i = 0; i < nextScenes.length; i++) {
         const url = await requestSceneImage(nextScenes[i], i, imageStyle);
         setScenes(prev => prev.map((s, idx) => idx === i ? { ...s, imageUrl: url } : s));
         setUpdatingImageIndexes(prev => prev.filter(idx => idx !== i));
       }
-    } catch (e) {
-      alert("생성 중 오류가 발생했습니다.");
-    } finally {
-      setIsGenerating(false);
-      setUpdatingImageIndexes([]);
-    }
+    } catch (e) { alert("생성 실패"); } finally { setIsGenerating(false); }
   };
 
   return (
     <main className="min-h-screen bg-[#F8F9FA] px-6 py-10">
       <div className="mx-auto max-w-6xl space-y-10">
         <section className="rounded-2xl border bg-white p-6 shadow-sm">
-          <h1 className="mb-4 text-xl font-bold flex items-center gap-2">
-            <Sparkles className="text-indigo-500" /> AI 스토리보드 생성기
-          </h1>
+          <h1 className="text-xl font-bold mb-4 flex items-center gap-2"><Sparkles className="text-indigo-500" /> AI 스토리보드 생성</h1>
           <textarea
             className="h-48 w-full rounded-lg border p-4 outline-none focus:ring-2 focus:ring-indigo-200"
             placeholder="시놉시스를 입력하세요..."
             value={synopsis}
             onChange={(e) => setSynopsis(e.target.value)}
           />
-          
           <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* 스타일 선택 */}
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">이미지 스타일</label>
-              <select 
-                className="w-full rounded-lg border p-2.5 text-sm"
-                value={imageStyle} 
-                onChange={(e) => setImageStyle(e.target.value as any)}
-              >
-                {IMAGE_STYLE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              <label className="block text-sm font-bold mb-2">이미지 스타일</label>
+              <select className="w-full rounded-lg border p-2.5" value={imageStyle} onChange={(e) => setImageStyle(e.target.value as any)}>
+                {IMAGE_STYLE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
-
-            {/* 종횡비 선택 (우리가 찾던 그 기능!) */}
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">이미지 비율 (Aspect Ratio)</label>
-              <select 
-                className="w-full rounded-lg border p-2.5 text-sm"
-                value={aspectRatio} 
-                onChange={(e) => setAspectRatio(e.target.value as any)}
-              >
-                {ASPECT_RATIO_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              <label className="block text-sm font-bold mb-2">이미지 비율</label>
+              <select className="w-full rounded-lg border p-2.5" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as any)}>
+                {ASPECT_RATIO_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
             </div>
           </div>
-
-          <button
-            onClick={handleGenerate}
-            disabled={!canGenerate || isGenerating}
-            className="mt-6 w-full rounded-lg bg-indigo-600 py-3 font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
-          >
+          {imageStyle === "custom" && <CustomStylePanel prompt={customStylePrompt} onPromptChange={setCustomStylePrompt} />}
+          <button onClick={handleGenerate} disabled={!canGenerate || isGenerating} className="mt-6 w-full rounded-lg bg-indigo-600 py-3 font-bold text-white hover:bg-indigo-700 disabled:opacity-50">
             {isGenerating ? "생성 중..." : "스토리보드 생성하기"}
           </button>
         </section>
 
-        {/* 하단 장면 리스트 렌더링 부분 (생략 - 기존과 동일) */}
-        <section className="grid gap-6">
-           {scenes.map((scene, i) => (
-             <div key={i} className="flex gap-4 p-4 bg-white border rounded-xl items-start">
-                <div className="relative w-1/2 aspect-video bg-gray-100 rounded-lg overflow-hidden">
-                   {updatingImageIndexes.includes(i) && <div className="absolute inset-0 flex items-center justify-center bg-white/60"><Loader2 className="animate-spin" /></div>}
-                   <img src={scene.imageUrl} className="object-cover w-full h-full" alt="scene" />
-                </div>
-                <div className="flex-1">
-                   <h3 className="font-bold">{scene.title}</h3>
-                   <p className="text-sm text-gray-600 mt-2">{scene.description}</p>
-                </div>
-             </div>
-           ))}
+        <section className="space-y-3">
+          <h2 className="text-lg font-bold">정리된 시놉시스</h2>
+          <SynopsisCard sections={synopsisSections} topSummary={topSummary} />
+        </section>
+
+        <section className="space-y-4">
+          <h2 className="text-lg font-bold">스토리보드 씬</h2>
+          {scenes.map((scene, i) => (
+            <div key={i} className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-white border rounded-2xl items-start">
+              <div className="relative aspect-video bg-gray-100 rounded-lg overflow-hidden border">
+                {updatingImageIndexes.includes(i) && <div className="absolute inset-0 flex items-center justify-center bg-white/60 z-10"><Loader2 className="animate-spin text-indigo-600" /></div>}
+                <img src={scene.imageUrl} className="object-cover w-full h-full" alt="scene" />
+              </div>
+              <div className="p-2">
+                <h3 className="font-bold">{scene.title}</h3>
+                <p className="text-sm text-gray-600 mt-2 leading-relaxed">{scene.description}</p>
+              </div>
+            </div>
+          ))}
         </section>
       </div>
     </main>
