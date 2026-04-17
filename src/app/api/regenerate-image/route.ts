@@ -13,7 +13,6 @@ export async function POST(req: Request) {
       scenePrompt,
       imageStyle,
       aspectRatio, 
-      customStylePrompt,
       customReferenceImageBase64,
       customReferenceImageMimeType,
     } = body;
@@ -26,7 +25,8 @@ export async function POST(req: Request) {
     const ai = new GoogleGenAI({ apiKey });
     const model = DEFAULT_IMAGE_MODELS[0];
 
-    const config: any = {
+    // 타입을 명확히 지정하여 'any' 에러 방지
+    const config: Record<string, unknown> = {
       numberOfImages: 1,
       aspectRatio: aspectRatio || "16:9", 
     };
@@ -42,19 +42,17 @@ export async function POST(req: Request) {
     }
 
     const response = await ai.models.generateImages({ model, prompt: scenePrompt, config });
-    
-    // 이 부분이 수정되었습니다: image가 있는지 먼저 확인합니다.
     const image = response?.generatedImages?.[0]?.image;
 
     if (!image || !image.imageBytes) {
-      throw new Error("AI가 이미지를 생성하지 못했습니다. 다시 시도해 주세요.");
+      throw new Error("이미지 데이터가 없습니다.");
     }
 
     return NextResponse.json({ 
       imageUrl: `data:${image.mimeType || "image/png"};base64,${image.imageBytes}` 
     });
-  } catch (error: any) {
-    console.error("Image generation error:", error);
-    return NextResponse.json({ error: error.message || "이미지 생성 중 오류 발생" }, { status: 500 });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
