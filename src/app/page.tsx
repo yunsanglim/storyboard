@@ -1,8 +1,19 @@
 "use client";
 
 import Image from "next/image";
-import { Loader2, PenLine, RefreshCw, Sparkles } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  ChevronDown,
+  ImagePlus,
+  Loader2,
+  Printer,
+  PenLine,
+  RefreshCw,
+  Sparkles,
+  X,
+} from "lucide-react";
+import { useRef, useMemo, useState, useCallback } from "react";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type SynopsisSectionKey =
   | "logline"
@@ -21,16 +32,36 @@ type Scene = {
   imageUrl: string;
 };
 
+type SynopsisSections = Record<SynopsisSectionKey, string>;
+
+type ReferenceImage = {
+  base64: string;
+  mimeType: string;
+  previewUrl: string;
+};
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const synopsisSectionMeta: { label: string; key: SynopsisSectionKey }[] = [
   { label: "로그라인", key: "logline" },
   { label: "세계관 / 배경", key: "worldBackground" },
   { label: "주요 캐릭터", key: "mainCharacters" },
-  { label: "스토리 구조 (도입-전개-결말)", key: "storyStructure" },
+  { label: "스토리 구조", key: "storyStructure" },
   { label: "핵심 갈등", key: "coreConflict" },
   { label: "주제", key: "theme" },
   { label: "톤 & 스타일", key: "toneStyle" },
-  { label: "기획 의도", key: "planningIntent" }
+  { label: "기획 의도", key: "planningIntent" },
 ];
+
+const IMAGE_STYLE_OPTIONS = [
+  { value: "pixar",         label: "🎨 픽사 애니메이션" },
+  { value: "live_action",   label: "🎬 실사 영화" },
+  { value: "watercolor",    label: "🖌️ 수채화 일러스트" },
+  { value: "marvel_comics", label: "💥 마블 코믹스" },
+  { value: "custom",        label: "✏️ 커스텀" },
+] as const;
+
+type ImageStyleValue = (typeof IMAGE_STYLE_OPTIONS)[number]["value"];
 
 const defaultImageDataUrl =
   "data:image/svg+xml;utf8," +
@@ -50,14 +81,14 @@ const emptyScenes: Scene[] = Array.from({ length: 7 }).map((_, index) => ({
   title: `Scene ${index + 1}`,
   description: "",
   imagePrompt: "",
-  imageUrl: defaultImageDataUrl
+  imageUrl: defaultImageDataUrl,
 }));
 
 const synopsisTemplate = `로그라인:
 
 세계관 / 배경:
 
-주요 캐릭터 설명:
+주요 캐릭터:
 
 스토리 구조 (도입-전개-결말):
 
@@ -69,11 +100,488 @@ const synopsisTemplate = `로그라인:
 
 기획 의도:`;
 
+// ─── Export HTML builder ──────────────────────────────────────────────────────
+
+function buildExportHtml(
+  scenes: Scene[],
+  synopsisSections: SynopsisSections,
+  topSummary: string[]
+): string {
+  const today = new Date().toLocaleDateString("ko-KR", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+
+  const synopsisRows = synopsisSectionMeta
+    .filter(({ key }) => synopsisSections[key])
+    .map(
+      ({ label, key }) => `
+      <tr>
+        <td class="label">${label}</td>
+        <td>${synopsisSections[key]}</td>
+      </tr>`
+    )
+    .join("");
+
+  const sceneCards = scenes
+    .map(
+      (scene, idx) => `
+    <div class="scene-card">
+      <div class="scene-img-wrap">
+        <img src="${scene.imageUrl}" alt="${scene.title}" />
+      </div>
+      <div class="scene-body">
+        <div class="scene-num">SCENE ${idx + 1}</div>
+        <div class="scene-title">${scene.title}</div>
+        <p class="scene-desc">${scene.description || "—"}</p>
+      </div>
+    </div>`
+    )
+    .join("");
+
+  const summaryHtml = topSummary.filter(Boolean).length
+    ? `<div class="summary-banner">
+        <span class="summary-label">전체 줄거리 요약</span>
+        <p>${topSummary.filter(Boolean).join("&nbsp;&nbsp;·&nbsp;&nbsp;")}</p>
+      </div>`
+    : "";
+
+  return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>스토리보드</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+      background: #f8f9fa;
+      color: #1a1a2e;
+      padding: 0;
+    }
+
+    /* ── Cover page ── */
+    .cover {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%);
+      color: white;
+      text-align: center;
+      padding: 60px 40px;
+      page-break-after: always;
+    }
+    .cover-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #a5b4fc;
+      border: 1px solid #6366f1;
+      border-radius: 100px;
+      padding: 6px 20px;
+      margin-bottom: 32px;
+    }
+    .cover h1 {
+      font-size: 48px;
+      font-weight: 800;
+      letter-spacing: -1px;
+      line-height: 1.15;
+      margin-bottom: 20px;
+    }
+    .cover-date {
+      font-size: 14px;
+      color: #a5b4fc;
+      margin-top: 16px;
+    }
+    .cover-divider {
+      width: 60px;
+      height: 3px;
+      background: #6366f1;
+      border-radius: 2px;
+      margin: 24px auto;
+    }
+
+    /* ── Content wrapper ── */
+    .content {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 60px 40px;
+    }
+
+    /* ── Section heading ── */
+    .section-heading {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #6366f1;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #e0e7ff;
+    }
+
+    /* ── Summary banner ── */
+    .summary-banner {
+      background: #eef2ff;
+      border-left: 4px solid #6366f1;
+      border-radius: 8px;
+      padding: 18px 24px;
+      margin-bottom: 28px;
+    }
+    .summary-label {
+      display: block;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #6366f1;
+      margin-bottom: 8px;
+    }
+    .summary-banner p {
+      font-size: 14px;
+      line-height: 1.8;
+      color: #374151;
+    }
+
+    /* ── Synopsis table ── */
+    .synopsis-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 60px;
+    }
+    .synopsis-table tr {
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .synopsis-table td {
+      padding: 14px 12px;
+      font-size: 14px;
+      line-height: 1.75;
+      color: #374151;
+      vertical-align: top;
+    }
+    .synopsis-table td.label {
+      width: 130px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #6366f1;
+      white-space: nowrap;
+      padding-top: 16px;
+    }
+
+    /* ── Scene cards ── */
+    .scenes-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+    }
+    .scene-card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+      page-break-inside: avoid;
+    }
+    .scene-img-wrap {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      overflow: hidden;
+      background: #f3f4f6;
+    }
+    .scene-img-wrap img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .scene-body {
+      padding: 16px 18px 20px;
+    }
+    .scene-num {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      color: #6366f1;
+      margin-bottom: 6px;
+    }
+    .scene-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #111827;
+      margin-bottom: 8px;
+    }
+    .scene-desc {
+      font-size: 13px;
+      line-height: 1.75;
+      color: #4b5563;
+    }
+
+    /* ── Footer ── */
+    .footer {
+      text-align: center;
+      padding: 40px 0 20px;
+      font-size: 12px;
+      color: #9ca3af;
+      border-top: 1px solid #e5e7eb;
+      margin-top: 60px;
+    }
+
+    /* ── Print styles ── */
+    @media print {
+      body { background: white; }
+      .cover { min-height: 100svh; }
+      .content { padding: 40px 30px; }
+      .scene-card { box-shadow: none; }
+      @page {
+        margin: 0;
+        size: A4 portrait;
+      }
+      .scenes-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Cover -->
+  <div class="cover">
+    <div class="cover-badge">AI Storyboard</div>
+    <h1>스토리보드</h1>
+    <div class="cover-divider"></div>
+    <div class="cover-date">${today} · 총 ${scenes.length}개 씬</div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+
+    <!-- Synopsis -->
+    ${summaryHtml ? `<div class="section-heading">시놉시스</div>${summaryHtml}` : ""}
+    ${
+      synopsisRows
+        ? `
+      <table class="synopsis-table">
+        <tbody>${synopsisRows}</tbody>
+      </table>`
+        : ""
+    }
+
+    <!-- Scenes -->
+    <div class="section-heading">스토리보드 씬</div>
+    <div class="scenes-grid">
+      ${sceneCards}
+    </div>
+
+    <div class="footer">AI Storyboard Generator &nbsp;·&nbsp; ${today}</div>
+  </div>
+
+  <script>
+    window.addEventListener("load", () => {
+      setTimeout(() => window.print(), 400);
+    });
+  </script>
+</body>
+</html>`;
+}
+
+// ─── SynopsisCard ─────────────────────────────────────────────────────────────
+
+function SynopsisCard({
+  sections,
+  topSummary,
+}: {
+  sections: SynopsisSections;
+  topSummary: string[];
+}) {
+  const hasContent = Object.values(sections).some((v) => v.trim());
+
+  if (!hasContent && topSummary.every((s) => !s)) {
+    return (
+      <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-8 text-center text-sm text-gray-400">
+        줄거리를 생성하면 여기에 정리된 시놉시스가 표시됩니다.
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      {topSummary.some((s) => s) && (
+        <div className="border-b border-indigo-100 bg-indigo-50/60 px-8 py-5">
+          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-indigo-400">
+            전체 줄거리 요약
+          </p>
+          <p className="text-sm leading-8 text-gray-700">
+            {topSummary.filter(Boolean).join("  ·  ")}
+          </p>
+        </div>
+      )}
+      <div className="divide-y divide-gray-100">
+        {synopsisSectionMeta.map(({ label, key }) => {
+          const value = sections[key];
+          if (!value) return null;
+          return (
+            <div key={key} className="flex gap-4 px-8 py-5">
+              <span className="mt-0.5 w-32 shrink-0 text-xs font-semibold uppercase tracking-wider text-indigo-500">
+                {label}
+              </span>
+              <p className="flex-1 text-sm leading-7 text-gray-700">{value}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── CustomStylePanel ─────────────────────────────────────────────────────────
+
+function CustomStylePanel({
+  prompt,
+  onPromptChange,
+  referenceImage,
+  onImageChange,
+  onImageRemove,
+}: {
+  prompt: string;
+  onPromptChange: (v: string) => void;
+  referenceImage: ReferenceImage | null;
+  onImageChange: (img: ReferenceImage) => void;
+  onImageRemove: () => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const readFile = (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      alert("이미지 파일만 업로드할 수 있습니다.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert("파일 크기는 10MB 이하여야 합니다.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result as string;
+      const [header, base64] = dataUrl.split(",");
+      const mimeType = header.replace("data:", "").replace(";base64", "");
+      onImageChange({ base64, mimeType, previewUrl: dataUrl });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) readFile(file);
+  };
+
+  return (
+    <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/50 p-4 space-y-4">
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold text-violet-700">
+          커스텀 스타일 프롬프트{" "}
+          <span className="font-normal text-gray-500">
+            (이미지 생성 시 프롬프트 앞에 자동 삽입됩니다)
+          </span>
+        </label>
+        <textarea
+          rows={3}
+          placeholder="예) Ghibli-style soft watercolor, dreamy pastel backgrounds, hand-drawn characters,"
+          value={prompt}
+          onChange={(e) => onPromptChange(e.target.value)}
+          className="w-full rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm leading-6 text-gray-800 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-200 placeholder:text-gray-400"
+        />
+        <p className="mt-1 text-xs text-gray-400">
+          💡 영문으로 작성하면 이미지 품질이 높아집니다.
+        </p>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold text-violet-700">
+          참조 이미지{" "}
+          <span className="font-normal text-gray-500">
+            (선택 · 업로드하면 해당 이미지의 스타일을 참고해 생성합니다)
+          </span>
+        </label>
+
+        {referenceImage ? (
+          <div className="relative inline-block">
+            <img
+              src={referenceImage.previewUrl}
+              alt="참조 이미지 미리보기"
+              className="h-36 w-auto rounded-lg border border-violet-200 object-cover shadow-sm"
+            />
+            <button
+              onClick={onImageRemove}
+              className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-gray-700 text-white shadow hover:bg-gray-900 transition"
+              title="이미지 제거"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+            <p className="mt-1.5 text-xs text-gray-400">
+              {referenceImage.mimeType} ·{" "}
+              {Math.round((referenceImage.base64.length * 3) / 4 / 1024)} KB
+            </p>
+          </div>
+        ) : (
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`flex h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed transition select-none ${
+              isDragging
+                ? "border-violet-400 bg-violet-100"
+                : "border-violet-200 bg-white hover:border-violet-400 hover:bg-violet-50"
+            }`}
+          >
+            <ImagePlus className="h-6 w-6 text-violet-400" />
+            <p className="text-xs text-gray-500">
+              클릭하거나 이미지를 드래그해서 업로드
+            </p>
+            <p className="text-xs text-gray-400">PNG · JPG · WEBP (최대 10MB)</p>
+          </div>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) readFile(file);
+            e.target.value = "";
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Home (Main Page) ─────────────────────────────────────────────────────────
+
 export default function Home() {
   const [synopsis, setSynopsis] = useState("");
-  const [synopsisSections, setSynopsisSections] = useState<
-    Record<SynopsisSectionKey, string>
-  >({
+  const [imageStyle, setImageStyle] = useState<ImageStyleValue>("live_action");
+
+  const [customStylePrompt, setCustomStylePrompt] = useState("");
+  const [customReferenceImage, setCustomReferenceImage] =
+    useState<ReferenceImage | null>(null);
+
+  const [synopsisSections, setSynopsisSections] = useState<SynopsisSections>({
     logline: "",
     worldBackground: "",
     mainCharacters: "",
@@ -81,7 +589,7 @@ export default function Home() {
     coreConflict: "",
     theme: "",
     toneStyle: "",
-    planningIntent: ""
+    planningIntent: "",
   });
   const [topSummary, setTopSummary] = useState<string[]>(Array(6).fill(""));
   const [scenes, setScenes] = useState<Scene[]>(emptyScenes);
@@ -90,6 +598,12 @@ export default function Home() {
   const [updatingImageIndexes, setUpdatingImageIndexes] = useState<number[]>([]);
 
   const canGenerate = useMemo(() => synopsis.trim().length > 0, [synopsis]);
+
+  /** 스토리보드 출력 버튼 활성화 조건 — 기본 placeholder가 아닌 실제 이미지가 하나 이상 있을 때 */
+  const canExport = useMemo(
+    () => scenes.some((s) => s.imageUrl !== defaultImageDataUrl && s.description),
+    [scenes]
+  );
 
   const setImageLoading = (index: number, loading: boolean) => {
     setUpdatingImageIndexes((prev) => {
@@ -100,16 +614,51 @@ export default function Home() {
     });
   };
 
-  const requestSceneImage = async (scene: Scene, index: number) => {
+  /** HTML을 새 탭에서 열고 인쇄 다이얼로그 자동 실행 */
+  const handleExport = useCallback(() => {
+    const html = buildExportHtml(scenes, synopsisSections, topSummary);
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, "_blank");
+    // blob URL 해제 (탭이 열린 후)
+    if (win) {
+      win.addEventListener("load", () => URL.revokeObjectURL(url), {
+        once: true,
+      });
+    }
+  }, [scenes, synopsisSections, topSummary]);
+
+  const buildImageRequestBody = (
+    scene: Scene,
+    index: number,
+    style: ImageStyleValue
+  ) => {
+    const base: Record<string, unknown> = {
+      sceneIndex: index,
+      sceneTitle: scene.title,
+      sceneDescription: scene.description,
+      scenePrompt: scene.imagePrompt,
+      imageStyle: style,
+    };
+    if (style === "custom") {
+      base.customStylePrompt = customStylePrompt;
+      if (customReferenceImage) {
+        base.customReferenceImageBase64 = customReferenceImage.base64;
+        base.customReferenceImageMimeType = customReferenceImage.mimeType;
+      }
+    }
+    return base;
+  };
+
+  const requestSceneImage = async (
+    scene: Scene,
+    index: number,
+    style: ImageStyleValue
+  ) => {
     const res = await fetch("/api/regenerate-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        sceneIndex: index,
-        sceneTitle: scene.title,
-        sceneDescription: scene.description,
-        scenePrompt: scene.imagePrompt
-      })
+      body: JSON.stringify(buildImageRequestBody(scene, index, style)),
     });
     const data = await res.json();
     if (!res.ok || !data.imageUrl) {
@@ -127,12 +676,10 @@ export default function Home() {
       const res = await fetch("/api/generate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ synopsis })
+        body: JSON.stringify({ synopsis }),
       });
       const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data?.error ?? "텍스트 생성 실패");
-      }
+      if (!res.ok) throw new Error(data?.error ?? "텍스트 생성 실패");
 
       setSynopsisSections(data.synopsisSections);
       setTopSummary(data.topSummary.slice(0, 6));
@@ -141,7 +688,7 @@ export default function Home() {
         title: data.scenes[idx]?.title ?? `Scene ${idx + 1}`,
         description: data.scenes[idx]?.description ?? "",
         imagePrompt: data.scenes[idx]?.imagePrompt ?? "",
-        imageUrl: defaultImageDataUrl
+        imageUrl: defaultImageDataUrl,
       }));
       setScenes(nextScenes);
 
@@ -151,7 +698,11 @@ export default function Home() {
       const imageErrors: string[] = [];
       for (let idx = 0; idx < nextScenes.length; idx += 1) {
         try {
-          const imageUrl = await requestSceneImage(nextScenes[idx], idx);
+          const imageUrl = await requestSceneImage(
+            nextScenes[idx],
+            idx,
+            imageStyle
+          );
           setScenes((prev) =>
             prev.map((scene, sceneIdx) =>
               sceneIdx === idx ? { ...scene, imageUrl } : scene
@@ -170,14 +721,14 @@ export default function Home() {
 
       if (imageErrors.length > 0) {
         alert(
-          `일부 이미지 생성에 실패했습니다.\n${imageErrors
-            .slice(0, 3)
-            .join("\n")}`
+          `일부 이미지 생성에 실패했습니다.\n${imageErrors.slice(0, 3).join("\n")}`
         );
       }
     } catch (error) {
       console.error(error);
-      alert(error instanceof Error ? error.message : "생성 중 오류가 발생했습니다.");
+      alert(
+        error instanceof Error ? error.message : "생성 중 오류가 발생했습니다."
+      );
     } finally {
       setIsGenerating(false);
       setGenerationStatus("");
@@ -202,7 +753,11 @@ export default function Home() {
   const handleRegenerateImage = async (index: number) => {
     setImageLoading(index, true);
     try {
-      const imageUrl = await requestSceneImage(scenes[index], index);
+      const imageUrl = await requestSceneImage(
+        scenes[index],
+        index,
+        imageStyle
+      );
       setScenes((prev) =>
         prev.map((scene, idx) =>
           idx === index ? { ...scene, imageUrl } : scene
@@ -220,14 +775,19 @@ export default function Home() {
     }
   };
 
+  // ── Render ────────────────────────────────────────────────────────────────
+
   return (
     <main className="min-h-screen bg-[#F8F9FA] px-6 py-10 text-gray-900">
       <div className="mx-auto w-full max-w-6xl space-y-10">
+
+        {/* ── Input Section ─────────────────────────────────── */}
         <section className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-indigo-500" />
             <h1 className="text-xl font-semibold">AI 스토리보드 자동 생성</h1>
           </div>
+
           <label className="mb-2 block text-sm font-medium text-gray-700">
             시놉시스 입력
           </label>
@@ -244,13 +804,45 @@ export default function Home() {
             value={synopsis}
             onChange={(e) => setSynopsis(e.target.value)}
           />
-          <div className="mt-4 flex items-center gap-2">
-            <button
-              onClick={() => setSynopsis(synopsisTemplate)}
-              className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-100"
-            >
-              템플릿 넣기
-            </button>
+
+          {/* ── Image Style Selector ──────────────────────── */}
+          <div className="mt-4">
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              이미지 스타일
+            </label>
+            <p className="mb-2 text-xs text-gray-500">
+              선택한 스타일이 7개 씬 이미지 전체에 일관되게 적용됩니다.
+            </p>
+            <div className="relative inline-block">
+              <select
+                value={imageStyle}
+                onChange={(e) =>
+                  setImageStyle(e.target.value as ImageStyleValue)
+                }
+                className="appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-4 pr-9 text-sm font-medium text-gray-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 cursor-pointer"
+              >
+                {IMAGE_STYLE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
+            </div>
+
+            {imageStyle === "custom" && (
+              <CustomStylePanel
+                prompt={customStylePrompt}
+                onPromptChange={setCustomStylePrompt}
+                referenceImage={customReferenceImage}
+                onImageChange={setCustomReferenceImage}
+                onImageRemove={() => setCustomReferenceImage(null)}
+              />
+            )}
+          </div>
+
+          {/* ── Action buttons ────────────────────────────── */}
+          <div className="mt-5 flex items-center gap-2">
             <button
               onClick={handleGenerate}
               disabled={!canGenerate || isGenerating}
@@ -264,6 +856,7 @@ export default function Home() {
               {isGenerating ? "생성 중..." : "줄거리 생성하기"}
             </button>
           </div>
+
           {isGenerating && (
             <div className="mt-4 inline-flex items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm text-indigo-700">
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -272,39 +865,32 @@ export default function Home() {
           )}
         </section>
 
+        {/* ── Unified Synopsis Card ──────────────────────────── */}
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">자동 정리된 시놉시스</h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {synopsisSectionMeta.map((section) => (
-              <div
-                key={section.key}
-                className="rounded-xl border border-gray-200 bg-white p-4 text-sm shadow-sm"
-              >
-                <p className="mb-1 font-semibold text-gray-900">{section.label}</p>
-                <p className="leading-6 text-gray-700">
-                  {synopsisSections[section.key] || "-"}
-                </p>
-              </div>
-            ))}
-          </div>
+          <h2 className="text-lg font-semibold">정리된 시놉시스</h2>
+          <SynopsisCard sections={synopsisSections} topSummary={topSummary} />
         </section>
 
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">시놉시스 / 전체 줄거리 요약</h2>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-            {topSummary.map((item, index) => (
-              <div
-                key={`summary-${index}`}
-                className="rounded-xl border border-gray-200 bg-white p-4 text-sm leading-6 shadow-sm"
-              >
-                {item || "-"}
-              </div>
-            ))}
-          </div>
-        </section>
-
+        {/* ── Storyboard Scenes ─────────────────────────────── */}
         <section className="space-y-4">
-          <h2 className="text-lg font-semibold">스토리보드 7개 씬</h2>
+          {/* 섹션 헤더 + 출력 버튼 */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">스토리보드 7개 씬</h2>
+            <button
+              onClick={handleExport}
+              disabled={!canExport}
+              title={
+                canExport
+                  ? "새 탭에서 인쇄용 페이지를 열고 PDF로 저장할 수 있습니다"
+                  : "스토리보드를 먼저 생성해 주세요"
+              }
+              className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3.5 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 hover:border-gray-400 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <Printer className="h-4 w-4" />
+              스토리보드 출력 / PDF
+            </button>
+          </div>
+
           {scenes.map((scene, index) => {
             const isImageLoading = updatingImageIndexes.includes(index);
             return (
