@@ -1,3 +1,9 @@
+/* src/app/globals.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 연결 확인용 (나중에 지우셔도 됩니다) */
+body {
+  background-color: #f8f9fa !important;
+}
