@@ -1,58 +1,33 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-const DEFAULT_IMAGE_MODELS = [
-  "imagen-3.0-generate-001",
-  "imagen-3.0-generate-002",
-];
-
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const {
-      scenePrompt,
-      imageStyle,
-      aspectRatio, 
-      customReferenceImageBase64,
-      customReferenceImageMimeType,
-    } = body;
-
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: "API 키가 없습니다." }, { status: 500 });
-    }
+
+    if (!apiKey) return NextResponse.json({ error: "키 없음" }, { status: 500 });
 
     const ai = new GoogleGenAI({ apiKey });
-    const model = DEFAULT_IMAGE_MODELS[0];
-
-    // 타입을 명확히 지정하여 'any' 에러 방지
-    const config: Record<string, unknown> = {
+    // 빌드 에러 방지를 위해 타입을 명확히 지정
+    const config: Record<string, any> = {
       numberOfImages: 1,
-      aspectRatio: aspectRatio || "16:9", 
+      aspectRatio: body.aspectRatio || "16:9"
     };
 
-    if (imageStyle === "custom" && customReferenceImageBase64) {
-      config.referenceImages = [{
-        referenceType: "STYLE",
-        referenceImage: {
-          imageBytes: customReferenceImageBase64,
-          mimeType: customReferenceImageMimeType,
-        },
-      }];
-    }
+    const response = await ai.models.generateImages({
+      model: "imagen-3.0-generate-001",
+      prompt: body.scenePrompt || body.imagePrompt,
+      config
+    });
 
-    const response = await ai.models.generateImages({ model, prompt: scenePrompt, config });
-    const image = response?.generatedImages?.[0]?.image;
-
-    if (!image || !image.imageBytes) {
-      throw new Error("이미지 데이터가 없습니다.");
-    }
+    const image = response.generatedImages?.[0]?.image;
+    if (!image) throw new Error("이미지 생성 실패");
 
     return NextResponse.json({ 
-      imageUrl: `data:${image.mimeType || "image/png"};base64,${image.imageBytes}` 
+      imageUrl: `data:${image.mimeType};base64,${image.imageBytes}` 
     });
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+  } catch (error: any) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
