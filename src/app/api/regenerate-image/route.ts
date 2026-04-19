@@ -13,6 +13,10 @@ const REFERENCE_IMAGE_SUPPORTED_MODELS = [
   "imagen-3.0-generate-001",
 ];
 
+// Imagen API 지원 종횡비
+const VALID_ASPECT_RATIOS = ["1:1", "9:16", "16:9", "4:3", "3:4"] as const;
+type ValidAspectRatio = (typeof VALID_ASPECT_RATIOS)[number];
+
 type PresetStyleValue = "pixar" | "live_action" | "watercolor" | "marvel_comics";
 type ImageStyleValue = PresetStyleValue | "custom";
 
@@ -36,7 +40,8 @@ type RegenerateImageBody = {
   customStylePrompt?: string;
   customReferenceImageBase64?: string;
   customReferenceImageMimeType?: string;
-  geminiApiKey?: string;   // 사용자가 프론트에서 전달한 키
+  geminiApiKey?: string;
+  aspectRatio?: string;   // 종횡비 (예: "16:9", "1:1", "4:3", "3:4", "9:16")
 };
 
 function resolveStylePrefix(body: RegenerateImageBody): string {
@@ -48,6 +53,13 @@ function resolveStylePrefix(body: RegenerateImageBody): string {
   }
   const key = imageStyle as PresetStyleValue;
   return IMAGE_STYLE_PREFIXES[key] ?? IMAGE_STYLE_PREFIXES.live_action;
+}
+
+function resolveAspectRatio(value?: string): ValidAspectRatio {
+  if (value && VALID_ASPECT_RATIOS.includes(value as ValidAspectRatio)) {
+    return value as ValidAspectRatio;
+  }
+  return "16:9"; // 기본값
 }
 
 export async function POST(req: Request) {
@@ -62,6 +74,7 @@ export async function POST(req: Request) {
       customReferenceImageBase64,
       customReferenceImageMimeType,
       geminiApiKey,
+      aspectRatio,
     } = body;
 
     const safeIndex = Number.isInteger(sceneIndex) ? Number(sceneIndex) : 0;
@@ -77,6 +90,8 @@ export async function POST(req: Request) {
     }
 
     const stylePrefix = resolveStylePrefix(body);
+    const resolvedAspectRatio = resolveAspectRatio(aspectRatio);
+
     const hasReferenceImage =
       imageStyle === "custom" &&
       !!customReferenceImageBase64 &&
@@ -109,7 +124,7 @@ ${stylePrefix}
 - 시네마틱한 구도
 - 인물, 배경, 감정이 명확히 드러나게
 - 텍스트 / 자막 / 워터마크 없음
-- 가로형 프레임, 고해상도 느낌
+- 종횡비: ${resolvedAspectRatio}
 `;
 
     let generatedImageUrl: string | null = null;
@@ -119,7 +134,11 @@ ${stylePrefix}
     for (const model of modelCandidates) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const config: Record<string, any> = { numberOfImages: 1 };
+        const config: Record<string, any> = {
+          numberOfImages: 1,
+          aspectRatio: resolvedAspectRatio,  // ← Imagen API 종횡비 파라미터
+        };
+
         if (usedReferenceImage) {
           config.referenceImages = [
             {

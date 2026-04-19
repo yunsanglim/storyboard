@@ -68,6 +68,17 @@ const IMAGE_STYLE_OPTIONS = [
 
 type ImageStyleValue = (typeof IMAGE_STYLE_OPTIONS)[number]["value"];
 
+// Imagen API 지원 종횡비
+const ASPECT_RATIO_OPTIONS = [
+  { value: "16:9",  label: "16:9  가로형 (영화/TV)",  aspect: "aspect-video" },
+  { value: "1:1",   label: "1:1   정사각형",            aspect: "aspect-square" },
+  { value: "4:3",   label: "4:3   표준 가로형",         aspect: "aspect-[4/3]" },
+  { value: "3:4",   label: "3:4   세로형 (포스터)",     aspect: "aspect-[3/4]" },
+  { value: "9:16",  label: "9:16  세로형 (모바일)",     aspect: "aspect-[9/16]" },
+] as const;
+
+type AspectRatioValue = (typeof ASPECT_RATIO_OPTIONS)[number]["value"];
+
 const defaultImageDataUrl =
   "data:image/svg+xml;utf8," +
   encodeURIComponent(`
@@ -275,11 +286,7 @@ function ApiKeyPanel({
             onClick={() => setShow((v) => !v)}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
           >
-            {show ? (
-              <EyeOff className="h-4 w-4" />
-            ) : (
-              <Eye className="h-4 w-4" />
-            )}
+            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         </div>
         <button
@@ -459,9 +466,7 @@ function CustomStylePanel({
             }`}
           >
             <ImagePlus className="h-6 w-6 text-violet-400" />
-            <p className="text-xs text-gray-500">
-              클릭하거나 이미지를 드래그해서 업로드
-            </p>
+            <p className="text-xs text-gray-500">클릭하거나 이미지를 드래그해서 업로드</p>
             <p className="text-xs text-gray-400">PNG · JPG · WEBP (최대 10MB)</p>
           </div>
         )}
@@ -487,9 +492,9 @@ export default function Home() {
   const [apiKey, setApiKey] = useState("");
   const [synopsis, setSynopsis] = useState("");
   const [imageStyle, setImageStyle] = useState<ImageStyleValue>("live_action");
+  const [aspectRatio, setAspectRatio] = useState<AspectRatioValue>("16:9");
   const [customStylePrompt, setCustomStylePrompt] = useState("");
-  const [customReferenceImage, setCustomReferenceImage] =
-    useState<ReferenceImage | null>(null);
+  const [customReferenceImage, setCustomReferenceImage] = useState<ReferenceImage | null>(null);
   const [synopsisSections, setSynopsisSections] = useState<SynopsisSections>({
     logline: "",
     worldBackground: "",
@@ -543,18 +548,15 @@ export default function Home() {
     }
   }, [scenes, synopsisSections, topSummary]);
 
-  const buildImageRequestBody = (
-    scene: Scene,
-    index: number,
-    style: ImageStyleValue
-  ) => {
+  const buildImageRequestBody = (scene: Scene, index: number, style: ImageStyleValue) => {
     const base: Record<string, unknown> = {
       sceneIndex: index,
       sceneTitle: scene.title,
       sceneDescription: scene.description,
       scenePrompt: scene.imagePrompt,
       imageStyle: style,
-      geminiApiKey: apiKey,          // ← 사용자 키 전달
+      aspectRatio,
+      geminiApiKey: apiKey,
     };
     if (style === "custom") {
       base.customStylePrompt = customStylePrompt;
@@ -566,20 +568,14 @@ export default function Home() {
     return base;
   };
 
-  const requestSceneImage = async (
-    scene: Scene,
-    index: number,
-    style: ImageStyleValue
-  ) => {
+  const requestSceneImage = async (scene: Scene, index: number, style: ImageStyleValue) => {
     const res = await fetch("/api/regenerate-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(buildImageRequestBody(scene, index, style)),
     });
     const data = await res.json();
-    if (!res.ok || !data.imageUrl) {
-      throw new Error(data?.error ?? "이미지 생성 실패");
-    }
+    if (!res.ok || !data.imageUrl) throw new Error(data?.error ?? "이미지 생성 실패");
     return data.imageUrl as string;
   };
 
@@ -587,12 +583,11 @@ export default function Home() {
     if (!canGenerate) return;
     setIsGenerating(true);
     setGenerationStatus("줄거리를 작성하는 중...");
-
     try {
       const res = await fetch("/api/generate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ synopsis, geminiApiKey: apiKey }), // ← 키 전달
+        body: JSON.stringify({ synopsis, geminiApiKey: apiKey }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error ?? "텍스트 생성 실패");
@@ -647,9 +642,7 @@ export default function Home() {
     const nextText = window.prompt("장면 텍스트를 수정해 주세요.", current.description);
     if (!nextText) return;
     setScenes((prev) =>
-      prev.map((scene, idx) =>
-        idx === index ? { ...scene, description: nextText } : scene
-      )
+      prev.map((scene, idx) => idx === index ? { ...scene, description: nextText } : scene)
     );
   };
 
@@ -658,21 +651,17 @@ export default function Home() {
     try {
       const imageUrl = await requestSceneImage(scenes[index], index, imageStyle);
       setScenes((prev) =>
-        prev.map((scene, idx) =>
-          idx === index ? { ...scene, imageUrl } : scene
-        )
+        prev.map((scene, idx) => idx === index ? { ...scene, imageUrl } : scene)
       );
     } catch (error) {
       console.error(error);
-      alert(
-        error instanceof Error ? error.message : "이미지 재실행 중 오류가 발생했습니다."
-      );
+      alert(error instanceof Error ? error.message : "이미지 재실행 중 오류가 발생했습니다.");
     } finally {
       setImageLoading(index, false);
     }
   };
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <main className="min-h-screen bg-[#F8F9FA] px-6 py-10 text-gray-900">
@@ -720,9 +709,7 @@ export default function Home() {
                 className="appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-4 pr-9 text-sm font-medium text-gray-800 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 cursor-pointer"
               >
                 {IMAGE_STYLE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
               <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
@@ -736,6 +723,32 @@ export default function Home() {
                 onImageRemove={() => setCustomReferenceImage(null)}
               />
             )}
+          </div>
+
+          {/* ── Aspect Ratio ─────────────────────────────────── */}
+          <div className="mt-4">
+            <label className="mb-1.5 block text-sm font-medium text-gray-700">
+              이미지 종횡비
+            </label>
+            <p className="mb-2 text-xs text-gray-500">
+              생성되는 이미지의 가로세로 비율을 선택합니다.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {ASPECT_RATIO_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setAspectRatio(opt.value)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition ${
+                    aspectRatio === opt.value
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                      : "border-gray-300 bg-white text-gray-600 hover:border-indigo-300 hover:bg-indigo-50/50"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* ── Generate Button ───────────────────────────────── */}
@@ -754,9 +767,7 @@ export default function Home() {
               {isGenerating ? "생성 중..." : "줄거리 생성하기"}
             </button>
             {!apiKey.trim() && (
-              <p className="text-xs text-amber-600">
-                ⚠ API 키를 먼저 입력하고 저장해 주세요
-              </p>
+              <p className="text-xs text-amber-600">⚠ API 키를 먼저 입력하고 저장해 주세요</p>
             )}
           </div>
 
@@ -790,19 +801,18 @@ export default function Home() {
 
           {scenes.map((scene, index) => {
             const isImageLoading = updatingImageIndexes.includes(index);
+            const currentAspect = ASPECT_RATIO_OPTIONS.find(o => o.value === aspectRatio);
             return (
               <article
                 key={`scene-${index}`}
                 className="grid grid-cols-1 gap-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm md:grid-cols-2"
               >
-                <div className="relative h-52 overflow-hidden rounded-lg border border-gray-200 bg-gray-100">
+                <div className={`relative w-full overflow-hidden rounded-lg border border-gray-200 bg-gray-100 ${currentAspect?.aspect ?? "aspect-video"}`}>
                   {isImageLoading && (
                     <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80">
                       <div className="flex flex-col items-center gap-2">
                         <Loader2 className="h-7 w-7 animate-spin text-indigo-600" />
-                        <p className="text-sm font-medium text-indigo-700">
-                          그림을 그리는 중...
-                        </p>
+                        <p className="text-sm font-medium text-indigo-700">그림을 그리는 중...</p>
                       </div>
                     </div>
                   )}
