@@ -1,15 +1,16 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 
-const TEXT_MODEL = "gemini-2.0-flash";
+const TEXT_MODEL = "gemini-2.5-flash-lite";
 
 type GenerateTextBody = {
   synopsis?: string;
+  geminiApiKey?: string;   // 사용자가 프론트에서 전달한 키
 };
 
 export async function POST(req: Request) {
   try {
-    const { synopsis } = (await req.json()) as GenerateTextBody;
+    const { synopsis, geminiApiKey } = (await req.json()) as GenerateTextBody;
 
     if (!synopsis?.trim()) {
       return NextResponse.json(
@@ -18,11 +19,13 @@ export async function POST(req: Request) {
       );
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    // 우선순위: 사용자 키 → 서버 환경변수
+    const apiKey = geminiApiKey?.trim() || process.env.GEMINI_API_KEY;
+
     if (!apiKey) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY가 설정되어 있지 않습니다." },
-        { status: 500 }
+        { error: "Gemini API 키가 없습니다. 화면 상단에서 API 키를 입력해 주세요." },
+        { status: 400 }
       );
     }
 
@@ -54,25 +57,22 @@ export async function POST(req: Request) {
   "scenes": [
     {
       "title": "씬 제목 (예: 도입 — 평범한 일상)",
-      "description": "이 장면에서 일어나는 사건과 감정을 2~3문장으로 서술",
-      "imagePrompt": "This scene in English for image generation: concise visual description of the key moment, characters, setting, lighting, mood"
+      "description": "이 장면에서 일어나는 사건과 감정을 2~3문장으로 서술한다. 마지막 문장에는 반드시 카메라 앵글(예: 클로즈업, 풀샷, 익스트림 클로즈업, 버드아이뷰, 로우앵글 등)과 카메라 무빙(예: 줌인, 줌아웃, 패닝, 틸트업, 틸트다운, 트래킹샷, 핸드헬드 등)을 구체적으로 포함할 것.",
+      "imagePrompt": "This scene in English for image generation: concise visual description of the key moment, characters, setting, lighting, mood, camera angle and movement"
     }
   ]
 }
 
 scenes 배열은 반드시 7개여야 합니다.
-각 씬의 imagePrompt는 반드시 영문으로, 이미지 생성 AI가 잘 이해할 수 있도록 구체적으로 작성하십시오.`;
+각 씬의 description 마지막 문장에는 반드시 카메라 앵글과 무빙 정보를 포함하십시오.
+각 씬의 imagePrompt는 반드시 영문으로, 카메라 앵글과 무빙 정보를 포함하여 이미지 생성 AI가 잘 이해할 수 있도록 구체적으로 작성하십시오.`;
 
     const response = await ai.models.generateContent({
       model: TEXT_MODEL,
       contents: [
         {
           role: "user",
-          parts: [
-            {
-              text: `다음 시놉시스를 분석해주세요:\n\n${synopsis}`,
-            },
-          ],
+          parts: [{ text: `다음 시놉시스를 분석해주세요:\n\n${synopsis}` }],
         },
       ],
       config: {
@@ -82,10 +82,8 @@ scenes 배열은 반드시 7개여야 합니다.
       },
     });
 
-    const rawText =
-      response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 
-    // JSON 파싱 — 코드블록이 있으면 제거
     const cleaned = rawText
       .replace(/^```json\s*/i, "")
       .replace(/^```\s*/i, "")
